@@ -1,0 +1,21 @@
+{{ if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mongodb-query-exporter.fullname" . }}
+  labels: {{- merge ( include "mongodb-query-exporter.labels" . | fromYaml) .Values.service.labels | toYaml | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    app.kubernetes.io/name: {{ include "mongodb-query-exporter.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  type: {{ .Values.service.type }}
+{{- end }}

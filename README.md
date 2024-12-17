@@ -1,9 +1,9 @@
 # Prometheus MongoDB query exporter
-[![.github/workflows/action.yml](https://github.com/raffis/mongodb-query-exporter/workflows/.github/workflows/action.yml/badge.svg)](https://github.com/raffis/mongodb-query-exporter/actions)
-[![Go Report Card](https://goreportcard.com/badge/github.com/raffis/mongodb-query-exporter)](https://goreportcard.com/report/github.com/raffis/mongodb-query-exporter)
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/raffis/mongodb-query-exporter?tab=subdirectories)](https://pkg.go.dev/github.com/raffis/mongodb-query-exporter?tab=subdirectories)
+[![release](https://github.com/raffis/mongodb-query-exporter/actions/workflows/release.yaml/badge.svg)](https://github.com/raffis/mongodb-query-exporter/actions/workflows/release.yaml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/raffis/mongodb-query-exporter/v5)](https://goreportcard.com/report/github.com/raffis/mongodb-query-exporter/v5)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/raffis/mongodb-query-exporter/badge)](https://api.securityscorecards.dev/projects/github.com/raffis/mongodb-query-exporter)
 [![Coverage Status](https://coveralls.io/repos/github/raffis/mongodb-query-exporter/badge.svg?branch=master)](https://coveralls.io/github/raffis/mongodb-query-exporter?branch=master)
-[![Artifact HUB](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/prometheus-mongodb-query-exporter)](https://artifacthub.io/packages/search?repo=prometheus-mongodb-query-exporter)
+[![Artifact Hub](https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/mongodb-query-exporter)](https://artifacthub.io/packages/search?repo=mongodb-query-exporter)
 
 MongoDB aggregation query exporter for [Prometheus](https://prometheus.io).
 
@@ -18,16 +18,22 @@ Note that this is not designed to be a replacement for the [MongoDB exporter](ht
 
 ## Installation
 
-Get Prometheus MongoDB aggregation query exporter, either as a [binary](https://github.com/raffis/mongodb-query-exporter/releases/tag/v1.0.0) from the latest release or packaged as a [Docker image](https://github.com/raffis/mongodb-query-exporter/pkgs/container/mongodb-query-exporter).
+Get Prometheus MongoDB aggregation query exporter, either as a binaray from the latest release or packaged as a [Docker image](https://github.com/raffis/mongodb-query-exporter/pkgs/container/mongodb-query-exporter).
 
 ### Helm Chart
 For kubernetes users there is an official helm chart for the MongoDB query exporter.
-Please read the installation instructions [here](https://github.com/raffis/mongodb-query-exporter/blob/master/chart/prometheus-mongodb-query-exporter/README.md).
+Please read the installation instructions [here](https://github.com/raffis/mongodb-query-exporter/blob/master/chart/mongodb-query-exporter/README.md).
+
+### Docker
+You can run the exporter using docker (This will start it using the example config provided in the example folder):
+```sh
+docker run -e MDBEXPORTER_CONFIG=/config/configv3.yaml -v $(pwd)/example:/config ghcr.io/raffis/mongodb-query-exporter:latest
+```
 
 ## Usage
 
 ```
-$ mongodb_query_exporter
+$ mongodb-query-exporter
 ```
 
 Use the `-help` flag to get help information.
@@ -77,7 +83,7 @@ The metrics are by default exposed at `/metrics`.
 curl localhost:9412/metrics
 ```
 
-## Configuration
+## Exporter configuration
 
 The exporter is looking for a configuration in `~/.mongodb_query_exporter/config.yaml` and `/etc/mongodb_query_exporter/config.yaml` or if set the path from the env `MDBEXPORTER_CONFIG`.
 
@@ -99,7 +105,7 @@ Note if you have multiple MongoDB servers you can inject an env variable for eac
 2. `MDBEXPORTER_SERVER_1_MONGODB_URI=mongodb://srv2:27017`
 3. ...
 
-### Configure your metrics
+## Configure metrics
 
 Since the v1.0.0 release you should use the config version v3.0 to profit from the latest features.
 See the configuration version matrix bellow.
@@ -132,7 +138,8 @@ aggregations:
     overrideEmpty: true # if an empty result set is returned..
     emptyValue: 0       # create a metric with value 0
     labels: []
-    constLabels: []
+    constLabels:
+      region: eu-central-1
   cache: 0
   mode: pull
   pipeline: |
@@ -147,7 +154,7 @@ aggregations:
     help: 'The total number of processes in a job queue'
     value: total
     labels: [type,status]
-    constLabels: []
+    constLabels: {}
   mode: pull
   pipeline: |
     [
@@ -182,7 +189,7 @@ aggregations:
     help: 'The total number of events (created 1h ago or newer)'
     value: count
     labels: [type]
-    constLabels: []
+    constLabels: {}
   mode: pull
   # Note $$NOW is only supported in MongoDB >= 4.2
   pipeline: |
@@ -212,6 +219,35 @@ aggregations:
 ```
 
 See more examples in the `/example` folder.
+
+### Info metrics
+
+By defining no actual value field but set `overrideEmpty` to `true` a metric can sill be exported
+with labels from the aggregation pipeline but the value is set to a static value taken from `emptyValue`.
+This is useful for exporting info metrics which can later be used for join queries.
+
+```yaml
+servers:
+- name: main
+  uri: mongodb://localhost:27017
+aggregations:
+- database: mydb
+  collection: objects
+  metrics:
+  - name: myapp_info
+    help: 'Info metric'
+    overrideEmpty: true
+    emptyValue: 1
+    labels:
+    - mylabel1
+    - mylabel2
+    constLabels:
+      region: eu-central-1
+  cache: 0
+  mode: pull
+  pipeline: `...`
+```
+
 
 ## Supported config versions
 

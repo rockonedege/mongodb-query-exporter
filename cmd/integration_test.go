@@ -1,7 +1,6 @@
-package cmd
+package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -34,35 +33,35 @@ type integrationTest struct {
 
 func TestMetricsConfigv2(t *testing.T) {
 	expected := map[string]string{
-		"myapp_example_simplevalue_total":    `name:"myapp_example_simplevalue_total" help:"Simple gauge metric" type:GAUGE metric:<gauge:<value:2 > > `,
-		"myapp_example_processes_total":      `name:"myapp_example_processes_total" help:"The total number of processes in a job queue" type:GAUGE metric:<label:<name:"status" value:"postponed" > label:<name:"type" value:"foobar" > gauge:<value:2 > > metric:<label:<name:"status" value:"processing" > label:<name:"type" value:"bar" > gauge:<value:1 > > `,
-		"myapp_events_total":                 `name:"myapp_events_total" help:"The total number of events (created 1h ago or newer)" type:GAUGE metric:<label:<name:"type" value:"bar" > gauge:<value:2 > > metric:<label:<name:"type" value:"foo" > gauge:<value:1 > > `,
+		"myapp_example_simplevalue_total":    `name:"myapp_example_simplevalue_total" help:"Simple gauge metric" type:GAUGE metric:<label:<name:"region" value:"eu-central-1" > label:<name:"server" value:"main" > gauge:<value:2 > > `,
+		"myapp_example_processes_total":      `name:"myapp_example_processes_total" help:"The total number of processes in a job queue" type:GAUGE metric:<label:<name:"server" value:"main" > label:<name:"status" value:"postponed" > label:<name:"type" value:"foobar" > gauge:<value:2 > > metric:<label:<name:"server" value:"main" > label:<name:"status" value:"processing" > label:<name:"type" value:"bar" > gauge:<value:1 > > `,
+		"myapp_events_total":                 `name:"myapp_events_total" help:"The total number of events (created 1h ago or newer)" type:GAUGE metric:<label:<name:"server" value:"main" > label:<name:"type" value:"bar" > gauge:<value:2 > > metric:<label:<name:"server" value:"main" > label:<name:"type" value:"foo" > gauge:<value:1 > > `,
 		"mongodb_query_exporter_query_total": `name:"mongodb_query_exporter_query_total" help:"How many MongoDB queries have been processed, partitioned by metric, server and status" type:COUNTER metric:<label:<name:"aggregation" value:"aggregation_0" > label:<name:"result" value:"SUCCESS" > label:<name:"server" value:"main" > counter:<value:1 > > metric:<label:<name:"aggregation" value:"aggregation_1" > label:<name:"result" value:"SUCCESS" > label:<name:"server" value:"main" > counter:<value:1 > > metric:<label:<name:"aggregation" value:"aggregation_2" > label:<name:"result" value:"SUCCESS" > label:<name:"server" value:"main" > counter:<value:1 > > `,
 	}
 
 	tests := []integrationTest{
-		/*integrationTest{
-			name:            "integration test using config v1.0 and mongodb:5.0",
-			configPath:      "../example/configv1.yaml",
-			mongodbImage:    "mongo:5.0",
-			expectedMetrics: expected,
-		},*/
-		integrationTest{
+		{
 			name:            "integration test using config v2.0 and mongodb:5.0",
 			configPath:      "../example/configv2.yaml",
 			mongodbImage:    "mongo:5.0",
 			expectedMetrics: expected,
 		},
-		integrationTest{
+		{
 			name:            "integration test using config v3.0 and mongodb:4.4",
 			configPath:      "../example/configv3.yaml",
 			mongodbImage:    "mongo:4.4",
 			expectedMetrics: expected,
 		},
-		integrationTest{
+		{
 			name:            "integration test using config v3.0 and mongodb:5.0",
 			configPath:      "../example/configv3.yaml",
 			mongodbImage:    "mongo:5.0",
+			expectedMetrics: expected,
+		},
+		{
+			name:            "integration test using config v3.0 and mongodb:6.0",
+			configPath:      "../example/configv3.yaml",
+			mongodbImage:    "mongo:6.0",
 			expectedMetrics: expected,
 		},
 	}
@@ -78,21 +77,24 @@ func executeIntegrationTest(t *testing.T, test integrationTest) {
 	container, err := setupMongoDBContainer(context.TODO(), test.mongodbImage)
 	assert.NoError(t, err)
 	opts := options.Client().ApplyURI(container.URI)
-	defer container.Terminate(context.TODO())
+
+	defer func() {
+		assert.NoError(t, container.Terminate(context.TODO()))
+	}()
 
 	client, err := mongo.Connect(context.TODO(), opts)
 	assert.NoError(t, err)
 	setupTestData(t, client)
 
 	os.Setenv("MDBEXPORTER_SERVER_0_MONGODB_URI", container.URI)
-	args := []string{
-		"-f", test.configPath,
+	os.Args = []string{
+		"mongodb_query_exporter",
+		fmt.Sprintf("--file=%s", test.configPath),
 	}
 
-	b := bytes.NewBufferString("")
-	rootCmd.SetOut(b)
-	rootCmd.SetArgs(args)
-	go rootCmd.Execute()
+	go func() {
+		main()
+	}()
 
 	//binding is blocking, do this async but wait 200ms for tcp port to be open
 	time.Sleep(200 * time.Millisecond)
@@ -118,7 +120,7 @@ func executeIntegrationTest(t *testing.T, test integrationTest) {
 	assert.Len(t, test.expectedMetrics, found)
 
 	//tear down http server and unregister collector
-	srv.Shutdown(context.TODO())
+	assert.NoError(t, srv.Shutdown(context.TODO()))
 	prometheus.Unregister(promCollector)
 }
 
@@ -156,40 +158,84 @@ func setupMongoDBContainer(ctx context.Context, image string) (*mongodbContainer
 	return &mongodbContainer{Container: container, URI: uri}, nil
 }
 
+type testRecord struct {
+	document   bson.M
+	database   string
+	collection string
+}
+
 func setupTestData(t *testing.T, client *mongo.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := client.Database("mydb").Collection("objects").InsertOne(ctx, bson.M{
-		"foo": "bar",
-	})
-	assert.NoError(t, err)
+	testData := []testRecord{
+		{
+			database:   "mydb",
+			collection: "objects",
+			document: bson.M{
+				"foo": "bar",
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "objects",
+			document: bson.M{
+				"foo": "foo",
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "queue",
+			document: bson.M{
+				"class":  "foobar",
+				"status": 1,
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "queue",
+			document: bson.M{
+				"class":  "foobar",
+				"status": 1,
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "queue",
+			document: bson.M{
+				"class":  "bar",
+				"status": 2,
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "events",
+			document: bson.M{
+				"type":    "bar",
+				"created": time.Now(),
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "events",
+			document: bson.M{
+				"type":    "bar",
+				"created": time.Now(),
+			},
+		},
+		{
+			database:   "mydb",
+			collection: "events",
+			document: bson.M{
+				"type":    "foo",
+				"created": time.Now(),
+			},
+		},
+	}
 
-	client.Database("mydb").Collection("objects").InsertOne(ctx, bson.M{
-		"foo": "foo",
-	})
-	client.Database("mydb").Collection("queue").InsertOne(ctx, bson.M{
-		"class":  "foobar",
-		"status": 1,
-	})
-	client.Database("mydb").Collection("queue").InsertOne(ctx, bson.M{
-		"class":  "foobar",
-		"status": 1,
-	})
-	client.Database("mydb").Collection("queue").InsertOne(ctx, bson.M{
-		"class":  "bar",
-		"status": 2,
-	})
-	client.Database("mydb").Collection("events").InsertOne(ctx, bson.M{
-		"type":    "bar",
-		"created": time.Now(),
-	})
-	client.Database("mydb").Collection("events").InsertOne(ctx, bson.M{
-		"type":    "bar",
-		"created": time.Now(),
-	})
-	client.Database("mydb").Collection("events").InsertOne(ctx, bson.M{
-		"type":    "foo",
-		"created": time.Now(),
-	})
+	for _, record := range testData {
+		_, err := client.Database(record.database).Collection(record.collection).InsertOne(ctx, record.document)
+		assert.NoError(t, err)
+	}
+
 }
